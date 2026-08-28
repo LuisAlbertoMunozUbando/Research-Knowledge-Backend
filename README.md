@@ -1,678 +1,213 @@
-# 🧠 Research Knowledge Hub
+# Research Knowledge Hub — Backend
 
-### Turn your research team's images, screenshots, slides and visual evidence into a searchable collective memory.
+Open-source backend for a collaborative multimodal research-memory system running on local GPU infrastructure.
 
-[![Open Source](https://img.shields.io/badge/Open%20Source-Yes-brightgreen)](#-open-source)
-[![DGX Spark](https://img.shields.io/badge/NVIDIA-DGX%20Spark-76B900)](#-architecture)
-[![FastAPI](https://img.shields.io/badge/FastAPI-Backend-009688)](https://fastapi.tiangolo.com/)
-[![Next.js](https://img.shields.io/badge/Next.js-Frontend-black)](https://nextjs.org/)
-[![Google Drive](https://img.shields.io/badge/Google%20Drive-Knowledge%20Archive-4285F4)](#-knowledge-archive)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](#-license)
+The current stable scope deliberately supports **images and PDF papers**. Both modalities are converted into structured evidence and then converge into the same synthesis, archival, retrieval and search pipeline.
 
----
-
-## 🌍 Why this project?
-
-Research teams generate enormous amounts of useful information every day:
-
-- screenshots from papers and social networks,
-- diagrams,
-- slides,
-- conference material,
-- experimental results,
-- robotics projects,
-- code references,
-- companies,
-- researchers,
-- technologies,
-- URLs,
-- datasets,
-- ideas worth revisiting.
-
-Most of that knowledge is eventually lost inside phones, messaging apps, browser tabs or personal folders.
-
-**Research Knowledge Hub turns those fragments into shared research memory.**
-
-Upload an image, let the local AI pipeline understand it, extract structured knowledge, archive the original evidence and make the resulting information searchable by your team.
-
-> **Do not just collect information. Build institutional memory.**
-
----
-
-# ✨ What it does
-
-A researcher uploads one or more images.
-
-The system automatically:
-
-📥 **captures the original evidence**
-
-👁️ **understands the image using a Vision-Language Model**
-
-🔎 **verifies the extracted information**
-
-🧠 **synthesizes knowledge across multiple images**
-
-🏷️ **extracts topics, people, organizations, projects and concepts**
-
-🧹 **canonicalizes noisy AI/OCR output**
-
-☁️ **archives the original image in Google Drive**
-
-🗂️ **creates structured metadata**
-
-🔤 **indexes the information with FTS5**
-
-🧬 **creates semantic embeddings**
-
-🔍 **enables hybrid lexical + semantic search**
-
-💬 **supports grounded questions over the research collection**
-
----
-
-# 🚀 The idea
-
-Instead of this:
+## Current production architecture
 
 ```text
-WhatsApp
-Screenshots
-Downloads
-Bookmarks
-Browser tabs
-Google Drive folders
-Personal notes
-Conference photos
-LinkedIn posts
-Papers
+                       Research Knowledge Hub
+                                |
+                                v
+                        FastAPI /upload
+                                |
+                         resource router
+                                |
+                  +-------------+-------------+
+                  |                           |
+                  v                           v
+              IMAGE                         PDF
+                  |                           |
+            Qwen2.5-VL                 PDF Inspector
+                  |                           |
+           visual extraction             native text
+                  |                           |
+             verification              PDF evidence
+                  |                           |
+                  |                    pdf-researcher
+                  |                           |
+                  +-------------+-------------+
+                                |
+                                v
+                       normalized evidence
+                                |
+                                v
+                     knowledge-synthesizer
+                                |
+                                v
+                        canonical JSON
+                                |
+                    +-----------+-----------+
+                    |           |           |
+                    v           v           v
+               Google Drive    FTS5     embeddings
+                                |
+                                v
+                            searchable
 ```
 
-we want this:
+The reference implementation runs its AI workloads on an **NVIDIA DGX Spark** using local inference and a sandboxed agent layer.
 
-```text
-                 Research Team
-                      │
-                      ▼
-               Upload Evidence
-                      │
-                      ▼
-              Multimodal Analysis
-                      │
-         ┌────────────┴────────────┐
-         ▼                         ▼
- Structured Knowledge      Original Evidence
-         │                         │
-         ▼                         ▼
- Search + RAG                Google Drive
-         │
-         ▼
- Collective Research Memory
-```
+## Supported resource types
 
----
+### Images
 
-# 🏗️ Architecture
+- JPG / JPEG
+- PNG
+- WEBP
+- screenshots
+- slides
+- conference photos and visual research evidence
 
-The current implementation combines cloud accessibility with local AI infrastructure.
+The image path uses a vision-language model for extraction followed by verification before knowledge synthesis.
 
-```text
-                           ┌─────────────────────┐
-                           │    Research Team    │
-                           │ Phone / Laptop / Web│
-                           └──────────┬──────────┘
-                                      │
-                                      ▼
-                           ┌─────────────────────┐
-                           │       Vercel        │
-                           │    Next.js UI       │
-                           └──────────┬──────────┘
-                                      │
-                                      ▼
-                     https://knowledge-api.example.org
-                                      │
-                                      ▼
-                           ┌─────────────────────┐
-                           │     Cloudflare      │
-                           │       Tunnel        │
-                           └──────────┬──────────┘
-                                      │
-                                      ▼
-                         ┌────────────────────────┐
-                         │   NVIDIA DGX Spark     │
-                         │                        │
-                         │      FastAPI API       │
-                         │          │             │
-                         │          ▼             │
-                         │   Qwen2.5-VL Vision    │
-                         │          │             │
-                         │          ▼             │
-                         │ Nemotron / Agent Layer │
-                         │          │             │
-                         │          ▼             │
-                         │   Canonicalization     │
-                         │          │             │
-                         │     ┌────┴────┐        │
-                         │     ▼         ▼        │
-                         │   SQLite   Embeddings  │
-                         │    FTS5    Ollama      │
-                         └─────┬─────────┬────────┘
-                               │         │
-                               ▼         ▼
-                          Hybrid Search
-                               │
-                               ▼
-                         Grounded Answers
+### PDF
 
-                               +
-                               │
-                               ▼
-                       ┌───────────────┐
-                       │ Google Drive  │
-                       │ KnowledgBase  │
-                       │ Original Data │
-                       └───────────────┘
-```
+The PDF path currently targets born-digital research papers. The pipeline performs deterministic PDF inspection and native text extraction, builds compact evidence, invokes a specialized `pdf-researcher`, normalizes the result and sends it to the same downstream knowledge synthesizer used by images.
 
----
-
-# 🧩 Technology Stack
-
-## 🖥️ Frontend
-- Next.js
-- React
-- TypeScript
-- Tailwind CSS
-- Vercel
-
-## ⚙️ Backend
-- Python
-- FastAPI
-- Uvicorn
-- systemd
-- Cloudflare Tunnel
-
-## 🧠 AI
-- Qwen2.5-VL
-- Nemotron
-- Ollama
-- local inference
-- multimodal extraction
-- structured synthesis
-- retrieval-augmented generation
-
-## 🔎 Retrieval
-- SQLite
-- FTS5
-- semantic embeddings
-- `nomic-embed-text`
-- hybrid lexical + semantic ranking
-
-## ☁️ Evidence Archive
-- Google Drive
-- `rclone`
-- structured JSON metadata
-
-## 🧪 Agent Infrastructure
-- NemoClaw
-- OpenClaw
-- OpenShell sandboxing
-
----
-
-# 🔄 Ingestion Pipeline
-
-Every upload moves through a persistent pipeline.
+The first PDF end-to-end test reached the complete persistent state machine successfully:
 
 ```text
 saved
-  ↓
-vision_verified
-  ↓
-package_created
-  ↓
-synthesized
-  ↓
-canonicalized
-  ↓
-drive_archived
-  ↓
-fts_indexed
-  ↓
-embedded
-  ↓
-database_synced
-  ↓
-searchable
+  -> vision_verified
+  -> package_created
+  -> synthesized
+  -> canonicalized
+  -> drive_archived
+  -> fts_indexed
+  -> embedded
+  -> database_synced
+  -> searchable
 ```
 
----
+`vision_verified` is retained as the current state name for backward compatibility even though it now also represents verified PDF evidence. A future schema migration may rename it to `evidence_verified`.
 
-# 📷 Knowledge Archive
+## Resumable ingestion
 
-The original image is preserved together with structured metadata.
+Every upload has a persistent package token and state file. If a processing stage fails, the resource does not need to be uploaded again.
 
-Example:
+The `/resume/{package_token}` path can reconstruct missing verified evidence from the saved resource and continue processing. This has been validated with the PDF pipeline after failures in the generative extraction stage.
 
-```text
-KnowledgBase/
-├── 2026-08-27__China-Robotics__robotics-technology__TOKEN.png
-└── 2026-08-27__China-Robotics__TOKEN.metadata.json
-```
+## Specialized agents
 
-This creates an explicit relationship between:
+The system avoids one large universal agent. Specialized components perform compact, well-defined tasks:
 
-**evidence → interpretation → retrieval**
+- image extraction / verification
+- `pdf-researcher`
+- `knowledge-synthesizer`
 
-rather than storing AI-generated summaries without provenance.
+Deterministic Python code is responsible for routing, file movement, schema adaptation, URL filtering, state transitions, persistence and retrieval operations.
 
----
+A key design principle is:
 
-# 🔎 Hybrid Search
+> Agents interpret evidence; deterministic software enforces contracts.
 
-Research Knowledge Hub combines lexical search with semantic retrieval.
+The PDF researcher uses compact prompts and an automatic retry path when the first generative response is not valid JSON. Raw agent responses are preserved for diagnosis rather than silently repairing malformed semantic output.
 
-### Lexical Search
-SQLite FTS5 finds direct textual matches.
+## Evidence archive
 
-### Semantic Search
-Embeddings find conceptually related information even when terminology differs.
-
-### Hybrid Retrieval
-Both signals are combined to improve research discovery.
-
----
-
-# 💬 Ask the Library
-
-Examples:
-
-```text
-What evidence have we collected about humanoid robotics?
-```
-
-```text
-Which organizations appear frequently in our embodied AI material?
-```
-
-```text
-What projects in our collection use ROS 2?
-```
-
-```text
-What have we collected about Chinese robotics companies?
-```
-
-The objective is not to replace researchers.
-
-The objective is to make the team's accumulated evidence easier to recover, connect and discuss.
-
----
-
-# 👩‍🔬 Built for Research Teams
-
-The project is designed around a simple idea:
-
-> **Knowledge becomes more valuable when a research group can accumulate it together.**
-
-One researcher sees an interesting robotics paper.
-
-Another discovers a startup.
-
-A student captures a useful architecture.
-
-Someone attends a conference.
-
-Another person finds an important GitHub repository.
-
-Instead of those discoveries remaining isolated, they become part of a common searchable memory.
-
----
-
-# 🌱 Grow Knowledge Together
-
-We would love to see laboratories, universities and independent research groups adapt this project.
-
-Use it to build:
-
-🤖 robotics knowledge bases
-
-🧬 biomedical research collections
-
-🧠 AI literature repositories
-
-🏭 industrial intelligence archives
-
-📚 teaching knowledge systems
-
-🔬 laboratory research memory
-
-🌎 collaborative international research collections
-
-🏢 corporate R&D intelligence systems
-
-The code is intended to be modified.
-
-Change the models.
-
-Change the database.
-
-Change the frontend.
-
-Change the retrieval strategy.
-
-Add another storage backend.
-
-Connect agents.
-
-Build your own research memory.
-
----
-
-# 🆓 Open Source
-
-The goal of this project is to make the complete architecture reproducible and extensible.
-
-The project source code can be released under the **MIT License**.
-
-Third-party models, frameworks and services may have their own licenses and terms.
-
----
-
-# 🔐 Privacy by Architecture
-
-The current architecture was designed so that computationally sensitive AI components can run locally.
-
-The DGX Spark can host:
-
-- multimodal inference,
-- embeddings,
-- retrieval,
-- SQLite,
-- agent execution,
-- pipeline orchestration.
-
-Only the services explicitly exposed through the API need to be reachable externally.
-
----
-
-# ⚡ NVIDIA DGX Spark
-
-The reference implementation currently runs its AI workloads on an NVIDIA DGX Spark.
-
-The architecture is not restricted to DGX Spark and can be adapted to:
-
-- workstation GPUs,
-- servers,
-- university clusters,
-- cloud GPUs,
-- Jetson-based edge systems,
-- hybrid infrastructure.
-
----
-
-# 🛠️ Repository Structure
-
-```text
-research-knowledge/
-├── api_v08.py
-├── pipeline_state.py
-├── drive_archive.py
-├── rag.py
-├── uploads/
-├── pipeline_states/
-├── embedding_work/
-├── db_sync/
-└── data/
-    └── knowledge.db
-```
-
----
-
-# 🚀 Quick Start
-
-```bash
-git clone https://github.com/YOUR-USER/Research-Knowledge-Backend.git
-cd Research-Knowledge-Backend
-
-python3 -m venv .venv
-source .venv/bin/activate
-
-pip install -r requirements.txt
-
-python3 -m uvicorn api_v08:app \
-  --host 127.0.0.1 \
-  --port 8010
-```
-
-Check status:
-
-```bash
-curl http://127.0.0.1:8010/v08/status
-```
-
----
-
-# ☁️ Google Drive Integration
-
-The reference implementation uses a Google Drive folder named:
+Original source resources are preserved in Google Drive together with generated metadata. The reference folder is:
 
 ```text
 KnowledgBase
 ```
 
-The DGX host accesses Drive through an authenticated `rclone` remote.
+Archive filenames include the package token and sequence identifier so that multi-resource packages do not overwrite one another.
 
-Never commit:
+Example:
+
+```text
+2026-08-28__Visual-Pose-Tracking-Teleoperation__...__TOKEN__slide_001.pdf
+2026-08-28__Visual-Pose-Tracking-Teleoperation__TOKEN__slide_001.metadata.json
+```
+
+## Retrieval
+
+The searchable layer combines:
+
+- SQLite
+- FTS5 lexical retrieval
+- semantic embeddings
+- `nomic-embed-text`
+- hybrid lexical + semantic ranking
+- grounded RAG answers
+
+Google Drive is the evidence archive; retrieval is performed from the structured local database and indexes rather than by searching Drive directly.
+
+## Infrastructure
+
+```text
+Next.js / Vercel
+       |
+       v
+knowledge.albertomunoz.ai
+       |
+       v
+knowledge-api.albertomunoz.ai
+       |
+       v
+Cloudflare Tunnel
+       |
+       v
+FastAPI on NVIDIA DGX Spark
+       |
+       +-- OpenShell sandbox
+       +-- OpenClaw / NemoClaw
+       +-- Ollama
+       +-- Qwen2.5-VL
+       +-- Nemotron
+       +-- SQLite / FTS5
+       +-- embeddings
+       +-- Google Drive archive
+```
+
+Only the FastAPI service is intended to be exposed through the HTTPS tunnel. Ollama, OpenClaw, OpenShell and inference services should remain private.
+
+## Important security rule
+
+Never commit any of the following:
 
 ```text
 rclone.conf
 OAuth credentials
-client_secret
+client secrets
 access tokens
 refresh tokens
+.env files containing secrets
+OpenClaw provider credentials
 ```
 
-to GitHub.
+The repository `.gitignore` should continue to exclude runtime databases, upload folders, pipeline states, temporary embedding work, backups and secrets.
 
----
+## Frontend
 
-# 🌐 Deployment
+The frontend lives at:
 
-```text
-Next.js
-   │
-   ▼
-Vercel
-   │
-   ▼
-Cloudflare
-   │
-   ▼
-FastAPI on local GPU infrastructure
-```
+https://github.com/LuisAlbertoMunozUbando/Research-Knowledge-Hub
 
-Example frontend environment variable:
+Its production backend variable is intended to be:
 
 ```env
-KNOWLEDGE_API_URL=https://knowledge-api.example.org
+KNOWLEDGE_API_URL=https://knowledge-api.albertomunoz.ai
 ```
 
----
-
-# 🔒 Security
-
-Before deploying this system for a larger team, consider adding:
-
-- authentication,
-- user accounts,
-- role-based permissions,
-- API keys,
-- upload size limits,
-- MIME validation,
-- rate limiting,
-- Cloudflare Access,
-- request auditing,
-- encrypted backups.
-
-Never expose Ollama, agent sandboxes or internal inference services directly to the public Internet.
-
----
-
-# 🗺️ Roadmap
-
-- [ ] Research team authentication
-- [ ] Multiple research groups
-- [ ] View original evidence from search
-- [ ] Google Drive source links
-- [ ] Multi-image packages
-- [ ] Date filters
-- [ ] Topic filters
-- [ ] Organization filters
-- [ ] Researcher/person filters
-- [ ] Automatic citation extraction
-- [ ] DOI detection
-- [ ] arXiv detection
-- [ ] GitHub repository detection
-- [ ] Knowledge Graph
-- [ ] Agent API / MCP interface
-- [ ] Multi-agent research workflows
-- [ ] WhatsApp ingestion
-- [ ] Email ingestion
-- [ ] Browser extension
-- [ ] Research digest generation
-- [ ] Duplicate evidence detection
-- [ ] Collaborative annotations
-
----
-
-# 🤝 Contributing
-
-Contributions are welcome.
-
-You can help by:
-
-🐛 reporting bugs
-
-🧠 proposing better retrieval strategies
-
-🤖 integrating new vision-language models
-
-🔌 adding new ingestion adapters
-
-🎨 improving the frontend
-
-🔐 strengthening security
-
-📚 improving documentation
-
-🔬 testing it in real research environments
-
-🌎 translating the interface
-
-If you use the project in your laboratory or research group, please share your experience.
-
----
-
-# 🧪 Research Philosophy
-
-### 1. Preserve the evidence
-AI interpretations can change. The original source should remain available.
-
-### 2. Structured knowledge should be regenerable
-AI-generated summaries, topics and embeddings are computational products.
-
-### 3. Research memory should belong to the research team
-AI should help researchers build collective intelligence rather than create another information silo.
-
----
-
-# 💡 From Information to Research Memory
+The intended public frontend hostname is:
 
 ```text
-Images
-Papers
-Videos
-Code
-Experiments
-Datasets
-Messages
-Conference Notes
-Web Resources
-        │
-        ▼
- Multimodal Knowledge Layer
-        │
-        ▼
- Search + RAG + Agents
-        │
-        ▼
- Institutional Research Memory
+knowledge.albertomunoz.ai
 ```
 
-A laboratory should be able to ask:
+## Current scope decision
 
-> What have we learned?
+For the current milestone the project is intentionally stopping at **images + PDFs**. Audio, YouTube, web URLs, GitHub repositories and other ingestion adapters remain natural future extensions, but they are not part of this stable milestone.
 
-> Where did we learn it?
+This keeps the architecture testable and gives the image and PDF pipelines time to mature before broadening modality support.
 
-> Who contributed it?
+## Philosophy
 
-> What evidence supports it?
+Preserve evidence first. Make AI-generated knowledge regenerable. Keep provenance explicit. Separate interpretation from deterministic validation. Keep local research memory under the control of the research team.
 
-> How does it connect to what we already know?
+## License
 
-That is the direction of **Research Knowledge Hub**.
-
----
-
-# ❤️ Build Knowledge With Your Team
-
-Research should not be a collection of isolated memories.
-
-Bring your students.
-
-Bring your collaborators.
-
-Bring your screenshots.
-
-Bring your papers.
-
-Bring your experiments.
-
-Bring your questions.
-
-Build a shared memory.
-
-**Capture knowledge. Connect evidence. Learn together.**
-
-🧠 + 👩‍🔬 + 👨‍🔬 + 🤖 = 🌍
-
----
-
-# 📄 License
-
-MIT License.
-
-See `LICENSE` for the complete license text.
-
----
-
-# ⭐ Support the Project
-
-If you find the project useful:
-
-⭐ Star the repository  
-🍴 Fork it  
-🧪 Test it with your research team  
-🔧 Improve it  
-📣 Share it with another laboratory  
-🤝 Contribute back  
-
-**The more teams that contribute knowledge and ideas, the more useful this infrastructure can become.**
-
----
-
-## 🧠 Research Knowledge Hub
-
-### From scattered evidence to collective intelligence.
+MIT.
