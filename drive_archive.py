@@ -36,6 +36,22 @@ def run(command):
     return result.stdout.strip()
 
 
+def detect_sequence(path: Path, explicit_sequence=None):
+    if explicit_sequence is not None:
+        return explicit_sequence
+
+    match = re.search(
+        r"(?:^|[_-])slide[_-]?(\d+)",
+        path.stem,
+        flags=re.IGNORECASE
+    )
+
+    if match:
+        return int(match.group(1))
+
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser()
 
@@ -45,6 +61,11 @@ def main():
     parser.add_argument("--summary", default="")
     parser.add_argument("--keywords", default="")
     parser.add_argument("--date", default="")
+    parser.add_argument(
+        "--sequence",
+        type=int,
+        default=None
+    )
 
     args = parser.parse_args()
 
@@ -53,7 +74,10 @@ def main():
     if not image.exists():
         raise FileNotFoundError(image)
 
-    date = args.date.strip() or datetime.now().strftime("%Y-%m-%d")
+    date = (
+        args.date.strip()
+        or datetime.now().strftime("%Y-%m-%d")
+    )
 
     keywords = [
         x.strip()
@@ -70,11 +94,23 @@ def main():
 
     suffix = image.suffix.lower() or ".jpg"
 
+    sequence = detect_sequence(
+        image,
+        args.sequence
+    )
+
+    item_suffix = (
+        f"__slide_{sequence:03d}"
+        if sequence is not None
+        else ""
+    )
+
     image_name = (
         f"{date}__"
         f"{title_slug}__"
         f"{keyword_slug}__"
         f"{args.token}"
+        f"{item_suffix}"
         f"{suffix}"
     )
 
@@ -82,6 +118,7 @@ def main():
         f"{date}__"
         f"{title_slug}__"
         f"{args.token}"
+        f"{item_suffix}"
         ".metadata.json"
     )
 
@@ -101,13 +138,18 @@ def main():
 
     metadata = {
         "package_token": args.token,
+        "sequence": sequence,
         "title": args.title,
         "date": date,
         "summary": args.summary,
         "keywords": keywords,
         "original_filename": image.name,
         "drive_image_filename": image_name,
-        "archived_at": datetime.now().astimezone().isoformat()
+        "archived_at": (
+            datetime.now()
+            .astimezone()
+            .isoformat()
+        )
     }
 
     metadata_path.write_text(
@@ -119,8 +161,13 @@ def main():
         encoding="utf-8"
     )
 
-    image_remote = f"{REMOTE_ROOT}/{image_name}"
-    metadata_remote = f"{REMOTE_ROOT}/{metadata_name}"
+    image_remote = (
+        f"{REMOTE_ROOT}/{image_name}"
+    )
+
+    metadata_remote = (
+        f"{REMOTE_ROOT}/{metadata_name}"
+    )
 
     run([
         "rclone",
@@ -136,17 +183,20 @@ def main():
         metadata_remote
     ])
 
-    print(json.dumps(
-        {
-            "ok": True,
-            "image": image_remote,
-            "metadata": metadata_remote,
-            "keywords": keywords,
-            "date": date
-        },
-        indent=2,
-        ensure_ascii=False
-    ))
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "image": image_remote,
+                "metadata": metadata_remote,
+                "sequence": sequence,
+                "keywords": keywords,
+                "date": date
+            },
+            indent=2,
+            ensure_ascii=False
+        )
+    )
 
 
 if __name__ == "__main__":

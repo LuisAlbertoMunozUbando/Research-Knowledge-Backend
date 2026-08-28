@@ -245,6 +245,109 @@ def continue_pipeline(
     ]
 
     # -----------------------------------------
+    # RESOURCE PROCESSING / VERIFIED EVIDENCE
+    # -----------------------------------------
+    #
+    # A package may have been saved successfully
+    # but failed before its resources were
+    # transformed into verified sandbox evidence.
+    #
+    # This block makes resume possible from
+    # the "saved" stage for both images and PDFs.
+
+    if (
+        is_complete(
+            state,
+            "saved"
+        )
+        and not is_complete(
+            state,
+            "vision_verified"
+        )
+    ):
+        saved_files = state.get(
+            "saved_files",
+            []
+        )
+
+        if not saved_files:
+            raise RuntimeError(
+                "Saved stage is complete but "
+                "saved_files is empty"
+            )
+
+        sandbox_files = []
+
+        for index, filename in enumerate(
+            saved_files,
+            start=1
+        ):
+            resource = Path(filename)
+
+            if not resource.exists():
+                raise RuntimeError(
+                    "Saved resource no longer exists: "
+                    + str(resource)
+                )
+
+            suffix = (
+                resource.suffix.lower()
+            )
+
+            if suffix == ".pdf":
+                pdf_result = (
+                    run_pdf_resource_pipeline(
+                        resource,
+                        package_token,
+                        index
+                    )
+                )
+
+                sandbox_files.append(
+                    pdf_result[
+                        "verified_json"
+                    ]
+                )
+
+            elif suffix in {
+                ".jpg",
+                ".jpeg",
+                ".png",
+                ".webp"
+            }:
+                visual = (
+                    run_visual_pipeline(
+                        resource
+                    )
+                )
+
+                uploaded = (
+                    upload_verified_json(
+                        visual[
+                            "verified_json"
+                        ],
+                        package_token,
+                        index
+                    )
+                )
+
+                sandbox_files.append(
+                    uploaded["sandbox"]
+                )
+
+            else:
+                raise RuntimeError(
+                    "Unsupported resource type: "
+                    + suffix
+                )
+
+        mark_complete(
+            state,
+            "vision_verified",
+            sandbox_files=sandbox_files
+        )
+
+    # -----------------------------------------
     # PACKAGE CREATION / SYNTHESIS
     # -----------------------------------------
 
@@ -496,6 +599,122 @@ print(json.dumps({{
     return state
 
 
+
+# ---------------------------------------------------------
+# PDF RESOURCE PIPELINE
+# ---------------------------------------------------------
+
+def run_pdf_resource_pipeline(
+    pdf_path,
+    package_token,
+    index
+):
+    pdf_path = Path(pdf_path)
+
+    sandbox_project = "/sandbox/knowledge-agent"
+
+    remote_raw_dir = (
+        f"{sandbox_project}/data/raw"
+    )
+
+    suffix = (
+        pdf_path.suffix.lower()
+        or ".pdf"
+    )
+
+    remote_pdf = (
+        f"{remote_raw_dir}/"
+        f"{package_token}_pdf_{index:03d}"
+        f"{suffix}"
+    )
+
+    # Transfer original PDF to sandbox through SSH stdin.
+    # We deliberately avoid SCP/SFTP because the sandbox
+    # does not expose an SFTP server.
+    transfer = subprocess.run(
+        [
+            "ssh",
+            SANDBOX_HOST,
+            (
+                f"mkdir -p "
+                f"{shlex.quote(remote_raw_dir)} "
+                f"&& cat > "
+                f"{shlex.quote(remote_pdf)}"
+            )
+        ],
+        input=pdf_path.read_bytes(),
+        capture_output=True,
+        timeout=600
+    )
+
+    if transfer.returncode != 0:
+        stderr = transfer.stderr.decode(
+            "utf-8",
+            errors="replace"
+        )
+
+        raise RuntimeError(
+            "PDF transfer to sandbox failed\n\n"
+            + stderr
+        )
+
+    command = (
+        f"cd {shlex.quote(sandbox_project)} "
+        f"&& python3 "
+        f"app/process_pdf_resource.py "
+        f"{shlex.quote(remote_pdf)} "
+        f"--token "
+        f"{shlex.quote(package_token)} "
+        f"--index {int(index)}"
+    )
+
+    process = subprocess.run(
+        [
+            "ssh",
+            SANDBOX_HOST,
+            command
+        ],
+        capture_output=True,
+        text=True,
+        timeout=1800
+    )
+
+    if process.returncode != 0:
+        raise RuntimeError(
+            "PDF resource pipeline failed\n\n"
+            f"STDOUT:\n{process.stdout}\n\n"
+            f"STDERR:\n{process.stderr}"
+        )
+
+    stdout = process.stdout.strip()
+
+    if not stdout:
+        raise RuntimeError(
+            "PDF resource pipeline "
+            "returned no output"
+        )
+
+    try:
+        result = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            "Could not parse PDF pipeline output\n\n"
+            f"{stdout}"
+        ) from exc
+
+    verified_json = result.get(
+        "verified_json"
+    )
+
+    if not verified_json:
+        raise RuntimeError(
+            "PDF pipeline did not return "
+            "verified_json"
+        )
+
+    return result
+
+
 # ---------------------------------------------------------
 # NEW UPLOAD
 # ---------------------------------------------------------
@@ -518,7 +737,7 @@ async def upload_v08(
     if not files:
         raise HTTPException(
             status_code=400,
-            detail="At least one image is required"
+            detail="At least one file is required"
         )
 
     package_token = (
@@ -593,25 +812,47 @@ async def upload_v08(
             saved_files,
             start=1
         ):
-            image = Path(filename)
+            resource = Path(filename)
 
-            visual = (
-                run_visual_pipeline(
-                    image
+            suffix = (
+                resource.suffix.lower()
+            )
+
+            if suffix == ".pdf":
+                pdf_result = (
+                    run_pdf_resource_pipeline(
+                        resource,
+                        package_token,
+                        index
+                    )
                 )
-            )
 
-            uploaded = (
-                upload_verified_json(
-                    visual["verified_json"],
-                    package_token,
-                    index
+                sandbox_files.append(
+                    pdf_result[
+                        "verified_json"
+                    ]
                 )
-            )
 
-            sandbox_files.append(
-                uploaded["sandbox"]
-            )
+            else:
+                visual = (
+                    run_visual_pipeline(
+                        resource
+                    )
+                )
+
+                uploaded = (
+                    upload_verified_json(
+                        visual[
+                            "verified_json"
+                        ],
+                        package_token,
+                        index
+                    )
+                )
+
+                sandbox_files.append(
+                    uploaded["sandbox"]
+                )
 
         mark_complete(
             state,
