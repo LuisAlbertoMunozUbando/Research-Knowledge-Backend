@@ -11,6 +11,7 @@ STAGES = [
     "package_created",
     "synthesized",
     "canonicalized",
+    "drive_archived",
     "fts_indexed",
     "embedded",
     "database_synced",

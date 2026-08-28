@@ -10,3 +10,7 @@ data/*.db-*
 .env
 .env.*
 !.env.example
+
+# Local backups and generated Drive archive metadata
+*.bak
+drive_archive/

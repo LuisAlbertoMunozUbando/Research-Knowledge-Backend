@@ -323,6 +323,109 @@ def continue_pipeline(
         )
 
     # -----------------------------------------
+    # GOOGLE DRIVE ARCHIVE
+    # -----------------------------------------
+
+    if not is_complete(
+        state,
+        "drive_archived"
+    ):
+        package_id = int(state["package_id"])
+
+        code = f"""
+import json
+import sqlite3
+from pathlib import Path
+
+db = Path.home() / "knowledge-agent" / "data" / "knowledge.db"
+
+conn = sqlite3.connect(db)
+row = conn.execute(
+    "SELECT title, package_final FROM packages WHERE id=?",
+    ({package_id},)
+).fetchone()
+conn.close()
+
+if not row:
+    raise SystemExit("PACKAGE_NOT_FOUND")
+
+title, package_final = row
+data = json.loads(package_final or "{{}}")
+
+print(json.dumps({{
+    "title": title,
+    "summary": data.get("summary", ""),
+    "topics": data.get("detected_topics", [])
+}}, ensure_ascii=False))
+"""
+
+        info_result = run_ssh(
+            "python3 -c " + shlex.quote(code),
+            timeout=120,
+            label="fetch Drive metadata"
+        )
+
+        lines = [
+            line.strip()
+            for line in info_result["stdout"].splitlines()
+            if line.strip()
+        ]
+
+        if not lines:
+            raise RuntimeError(
+                "No metadata returned for Drive archive"
+            )
+
+        info = json.loads(lines[-1])
+
+        drive_results = []
+
+        for image_path in state.get(
+            "saved_files",
+            []
+        ):
+            process = subprocess.run(
+                [
+                    "python3",
+                    str(
+                        Path.home()
+                        / "research-knowledge"
+                        / "drive_archive.py"
+                    ),
+                    "--image",
+                    image_path,
+                    "--title",
+                    info["title"],
+                    "--token",
+                    package_token,
+                    "--summary",
+                    info["summary"],
+                    "--keywords",
+                    ",".join(info["topics"])
+                ],
+                capture_output=True,
+                text=True,
+                timeout=600
+            )
+
+            if process.returncode != 0:
+                raise RuntimeError(
+                    "Drive archive failed\n\n"
+                    f"STDOUT:\n{process.stdout}\n\n"
+                    f"STDERR:\n{process.stderr}"
+                )
+
+            drive_results.append(
+                json.loads(process.stdout)
+            )
+
+        mark_complete(
+            state,
+            "drive_archived",
+            drive_files=drive_results
+        )
+
+    # -----------------------------------------
     # FTS5
     # -----------------------------------------
 
@@ -646,7 +749,7 @@ def resume_pipeline(
 def v08_status():
     return {
         "ok": True,
-        "version": "0.8.0",
+        "version": "0.8.1",
         "pipeline": "persistent-resumable",
         "resume_endpoint": (
             "/resume/{package_token}"

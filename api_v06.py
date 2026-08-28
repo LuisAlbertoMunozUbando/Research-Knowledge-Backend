@@ -260,25 +260,39 @@ def upload_verified_json(
         unique_local
     )
 
-    run_command(
-        [
-            "openshell",
-            "sandbox",
-            "upload",
-            SANDBOX_NAME,
-            str(unique_local),
-            SANDBOX_PROCESSED
-        ],
-        timeout=300,
-        label=(
-            "upload verified JSON "
-            "to sandbox"
-        )
-    )
-
     sandbox_path = (
         f"{SANDBOX_PROCESSED}/"
         f"{unique_name}"
+    )
+
+    with unique_local.open("rb") as source:
+        process = subprocess.run(
+            [
+                "ssh",
+                SANDBOX_HOST,
+                f"cat > {shlex.quote(sandbox_path)}"
+            ],
+            stdin=source,
+            capture_output=True,
+            timeout=300
+        )
+
+    if process.returncode != 0:
+        raise RuntimeError(
+            "Verified JSON SSH upload failed\n\n"
+            + process.stderr.decode(
+                errors="replace"
+            )
+        )
+
+    # Verify that the file actually exists remotely.
+    run_ssh(
+        (
+            "test -s "
+            + shlex.quote(sandbox_path)
+        ),
+        timeout=60,
+        label="verify uploaded JSON"
     )
 
     return {
