@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+uploads/
+pipeline_states/
+embedding_work/
+db_sync/
+data/*.db
+data/*.db-*
+.env
+.env.*
+!.env.example
