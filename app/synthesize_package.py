@@ -9,6 +9,7 @@ DB_PATH = Path.home() / "knowledge-agent" / "data" / "knowledge.db"
 DIAG_DIR = Path.home() / "knowledge-agent" / "data" / "diagnostics"
 DIAG_DIR.mkdir(parents=True, exist_ok=True)
 MAX_ATTEMPTS = 3
+OPENCLAW_TIMEOUT_SECONDS = 180
 
 
 def get_package_with_slides(package_id: int):
@@ -109,6 +110,30 @@ def _clean_list(values, limit):
     return result
 
 
+def _merge_unique(slide_payload, key, limit=50):
+    merged = []
+    seen = set()
+    for slide in slide_payload:
+        values = slide.get(key, [])
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            if isinstance(value, str):
+                value = value.strip()
+                marker = value.casefold()
+            elif isinstance(value, dict):
+                marker = json.dumps(value, ensure_ascii=False, sort_keys=True)
+            else:
+                continue
+            if not value or marker in seen:
+                continue
+            seen.add(marker)
+            merged.append(value)
+            if len(merged) >= limit:
+                return merged
+    return merged
+
+
 def build_slide_payload(slides):
     result = []
     for slide in slides:
@@ -126,10 +151,61 @@ def build_slide_payload(slides):
             "metrics": _clean_list(verified.get("metrics", []), 4),
             "links_visible": _clean_list(verified.get("links_visible", []), 4),
             "links_mentioned": _clean_list(verified.get("links_mentioned", []), 4),
-            "uncertainties": _clean_list(verified.get("uncertain_fields", []), 4),
+            "key_points": _clean_list(verified.get("key_points", []), 8),
+            "relationships": _clean_list(verified.get("relationships", []), 8),
+            "uncertainties": _clean_list(
+                verified.get("uncertainties", verified.get("uncertain_fields", [])),
+                4,
+            ),
         }
         result.append(compact)
     return result
+
+
+def deterministic_fallback(package, slide_payload, reason=""):
+    summaries = [
+        str(slide.get("summary", "")).strip()
+        for slide in slide_payload
+        if str(slide.get("summary", "")).strip()
+    ]
+
+    titles = [
+        str(slide.get("title", "")).strip()
+        for slide in slide_payload
+        if str(slide.get("title", "")).strip()
+    ]
+
+    suggested_title = str(package.get("title", "") or "").strip()
+    if not suggested_title and titles:
+        suggested_title = titles[0]
+
+    package_summary = " ".join(summaries).strip()
+    if not package_summary:
+        package_summary = suggested_title
+
+    uncertainties = _merge_unique(slide_payload, "uncertainties", 20)
+    if reason:
+        uncertainties.append(
+            "Automatic semantic synthesis was unavailable; deterministic evidence aggregation was used."
+        )
+
+    result = {
+        "suggested_title": suggested_title,
+        "package_summary": package_summary,
+        "detected_topics": _merge_unique(slide_payload, "topics", 30),
+        "people": _merge_unique(slide_payload, "people", 30),
+        "organizations": _merge_unique(slide_payload, "organizations", 30),
+        "projects": _merge_unique(slide_payload, "projects", 30),
+        "concepts": _merge_unique(slide_payload, "concepts", 30),
+        "metrics": _merge_unique(slide_payload, "metrics", 30),
+        "links_visible": _only_urls(_merge_unique(slide_payload, "links_visible", 30)),
+        "links_mentioned": _only_urls(_merge_unique(slide_payload, "links_mentioned", 30)),
+        "key_points": _merge_unique(slide_payload, "key_points", 50),
+        "relationships": _merge_unique(slide_payload, "relationships", 50),
+        "uncertainties": uncertainties,
+    }
+
+    return sanitize_synthesis(result)
 
 
 def save_diagnostic(package_id, attempt, prompt, result=None, error=None):
@@ -211,24 +287,57 @@ Devuelve exactamente:
     last_diag = None
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
-        result = subprocess.run(
-            ["openclaw", "agent", "--agent", "main", "-m", prompt],
-            capture_output=True,
-            text=True,
-        )
+        try:
+            result = subprocess.run(
+                ["openclaw", "agent", "--agent", "main", "-m", prompt],
+                capture_output=True,
+                text=True,
+                timeout=OPENCLAW_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as exc:
+            last_error = RuntimeError(
+                f"OpenClaw timed out after {OPENCLAW_TIMEOUT_SECONDS}s"
+            )
+            last_diag = save_diagnostic(
+                package_id,
+                attempt,
+                prompt,
+                error=last_error,
+            )
+            continue
 
         if result.returncode != 0:
             last_error = RuntimeError("OpenClaw returned non-zero exit code")
-            last_diag = save_diagnostic(package_id, attempt, prompt, result=result, error=last_error)
+            last_diag = save_diagnostic(
+                package_id,
+                attempt,
+                prompt,
+                result=result,
+                error=last_error,
+            )
             continue
 
         try:
             return extract_json(result.stdout)
         except Exception as exc:
             last_error = exc
-            last_diag = save_diagnostic(package_id, attempt, prompt, result=result, error=exc)
+            last_diag = save_diagnostic(
+                package_id,
+                attempt,
+                prompt,
+                result=result,
+                error=exc,
+            )
 
-    raise ValueError(f"{last_error}. Diagnostic saved to {last_diag}")
+    reason = str(last_error or "semantic synthesis unavailable")
+    if last_diag:
+        reason += f"; diagnostic: {last_diag}"
+
+    print(
+        "WARNING: semantic synthesis unavailable; using deterministic fallback.",
+        file=sys.stderr,
+    )
+    return deterministic_fallback(package, slide_payload, reason=reason)
 
 
 def save_synthesis(package_id: int, synthesis: dict):
