@@ -1,5 +1,6 @@
 import json
 import math
+import os
 import re
 import sqlite3
 import struct
@@ -7,6 +8,7 @@ import urllib.request
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 
@@ -43,6 +45,29 @@ STOPWORDS = {
 app = FastAPI(
     title="Research Knowledge Hub API",
     version="0.2.0"
+)
+
+
+ALLOWED_ORIGINS = [
+    origin.strip().rstrip("/")
+    for origin in os.getenv(
+        "KNOWLEDGE_ALLOWED_ORIGINS",
+        (
+            "https://knowledge.albertomunoz.ai,"
+            "http://localhost:3000,"
+            "http://127.0.0.1:3000"
+        ),
+    ).split(",")
+    if origin.strip()
+]
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type"],
 )
 
 
