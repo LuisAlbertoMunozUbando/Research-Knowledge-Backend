@@ -334,6 +334,12 @@ https://knowledge-api.albertomunoz.ai
 
 The backend route resolves through the `slideextractor-spark` Cloudflare Tunnel while local inference services remain private.
 
+Browser uploads go directly to this FastAPI endpoint rather than through a
+Vercel Function. Each image or PDF is limited to **10 MiB**, with the limit
+enforced while streaming the resource to disk. Production CORS is restricted
+to `https://knowledge.albertomunoz.ai`; local development origins can be
+overridden with `KNOWLEDGE_ALLOWED_ORIGINS`.
+
 ---
 
 ## 🚀 API health check
