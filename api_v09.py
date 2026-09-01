@@ -17,6 +17,7 @@ from api_v08 import (
     remove_route,
     UPLOAD_ROOT,
 )
+from pipeline_state import state_path
 
 
 # ---------------------------------------------------------
@@ -29,6 +30,44 @@ remove_route("/upload", "POST")
 # A single DGX Spark should not run multiple heavy ingestion
 # pipelines simultaneously from the same API process.
 _PIPELINE_LOCK = threading.Lock()
+MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024
+COPY_CHUNK_SIZE_BYTES = 1024 * 1024
+
+
+class UploadTooLargeError(ValueError):
+    pass
+
+
+def persist_upload_with_limit(
+    upload: UploadFile,
+    destination: Path,
+) -> int:
+    """Stream one upload to disk and enforce the per-file size limit."""
+    total_bytes = 0
+
+    try:
+        with destination.open("wb") as output:
+            while True:
+                chunk = upload.file.read(COPY_CHUNK_SIZE_BYTES)
+
+                if not chunk:
+                    break
+
+                total_bytes += len(chunk)
+
+                if total_bytes > MAX_FILE_SIZE_BYTES:
+                    raise UploadTooLargeError(
+                        f"{upload.filename or destination.name} exceeds "
+                        "the 10 MB limit per file"
+                    )
+
+                output.write(chunk)
+
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
+
+    return total_bytes
 
 
 def process_package_background(package_token: str):
@@ -104,6 +143,18 @@ async def upload_v09(
                     + (suffix or "no extension")
                 ),
             )
+
+        if (
+            upload.size is not None
+            and upload.size > MAX_FILE_SIZE_BYTES
+        ):
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"{original} exceeds the 10 MB limit per file"
+                ),
+            )
+
         originals.append(original)
 
     package_token = uuid.uuid4().hex[:12]
@@ -128,8 +179,7 @@ async def upload_v09(
                 / f"slide_{index:03d}{suffix}"
             )
 
-            with destination.open("wb") as output:
-                shutil.copyfileobj(upload.file, output)
+            persist_upload_with_limit(upload, destination)
 
             saved_files.append(str(destination))
 
@@ -138,6 +188,14 @@ async def upload_v09(
             "saved",
             saved_files=saved_files,
         )
+
+    except UploadTooLargeError as exc:
+        shutil.rmtree(package_dir, ignore_errors=True)
+        state_path(package_token).unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=413,
+            detail=str(exc),
+        ) from exc
 
     except Exception as exc:
         mark_failed(
